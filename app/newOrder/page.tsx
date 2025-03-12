@@ -183,12 +183,12 @@ export default function NewOrderPage() {
           />
         </div>
         <div>
-          <label htmlFor="destination">Pallet number:</label>
+          <label htmlFor="palletNumber">Pallet number:</label>
           <input
-            id="destination"
-            name="destination"
+            id="palletNumber"
+            name="palletNumber"
             type="text"
-            value={formData.destination}
+            value={formData.palletNumber}
             onChange={handleChange}
             style={{
               border: "1px solid #ccc",
@@ -197,7 +197,7 @@ export default function NewOrderPage() {
               width: "100%",
             }}
           />
-          </div>
+        </div>
         <button
           type="submit"
           className="border border-gray-300 px-4 py-2 rounded transition transform duration-300 hover:scale-105 mt-4"

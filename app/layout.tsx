@@ -27,15 +27,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       >
         {/* Global header/navigation */}
         <header className="p-4 bg-white shadow flex justify-between items-center">
-          <div className="text-2xl font-bold">
-            <Image
-              src="/ordex.png"
-              alt="ordex logo"
-              width={180}
-              height={38}
-              priority
-            />
-          </div>
+          <Link href="/" className="transition transform duration-300 hover:scale-105">
+            <button className="focus:outline-none">
+              <Image
+                src="/ordex.png"
+                alt="ordex logo"
+                width={180}
+                height={38}
+                priority
+              />
+            </button>
+          </Link>
           <nav className="flex gap-4">
             <Link 
               href="/" 

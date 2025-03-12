@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { auth, db } from "../firebaseConfig";
 import { onAuthStateChanged, User } from "firebase/auth";
-import { collection, getDocs } from "firebase/firestore";
+import { collection, getDocs, deleteDoc, doc, addDoc } from "firebase/firestore";
 import Link from "next/link";
 
 interface OrderData {
@@ -51,6 +51,25 @@ export default function OrdersListPage() {
 
     fetchOrders();
   }, [user]);
+
+  // Delete pallet handler
+  const handleDeletePallet = async (order: OrderData) => {
+    try {
+      // Save a record of the order in the "deletedOrders" collection with a timestamp
+      await addDoc(collection(db, "deletedOrders"), {
+        ...order,
+        deletedAt: new Date().toISOString(),
+      });
+
+      // Delete the order from the "orders" collection
+      await deleteDoc(doc(db, "orders", order.id));
+
+      // Remove the order from local state
+      setOrders((prevOrders) => prevOrders.filter((o) => o.id !== order.id));
+    } catch (error) {
+      console.error("Error deleting pallet:", error);
+    }
+  };
 
   // If not signed in, show a message and link to sign in
   if (!user) {
@@ -114,7 +133,7 @@ export default function OrdersListPage() {
           padding: "0.5rem",
           borderRadius: "4px",
           width: "100%",
-          maxWidth: "600px", // Adjust or remove this for a wider input
+          maxWidth: "600px",
         }}
       />
 
@@ -126,7 +145,7 @@ export default function OrdersListPage() {
             listStyle: "none",
             padding: 0,
             width: "100%",
-            maxWidth: "600px", // Adjust or remove this for a wider list
+            maxWidth: "600px",
           }}
         >
           {filteredOrders.map((order) => (
@@ -157,6 +176,12 @@ export default function OrdersListPage() {
               <p>
                 <strong>Pallet:</strong> {order.palletNumber}
               </p>
+              <button
+                onClick={() => handleDeletePallet(order)}
+                className="mt-2 bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded transition transform duration-300 hover:scale-105"
+              >
+                Delete Pallet
+              </button>
             </li>
           ))}
         </ul>
