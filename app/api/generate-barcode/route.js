@@ -1,4 +1,3 @@
-// ⬇️ keep this first so Vercel deploys on the Node.js runtime
 export const runtime = 'nodejs';
 
 import { NextResponse } from 'next/server';
@@ -9,14 +8,14 @@ import { auth, db } from '@/app/firebaseConfig';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { doc, setDoc } from 'firebase/firestore';
 
-/* ---------- one‑time sign‑in (per cold‑start) ---------- */
+/* ───────── one‑time sign‑in per cold‑start ───────── */
 let signInOnce;
 async function ensureBackendSignIn() {
   if (!signInOnce) {
     signInOnce = signInWithEmailAndPassword(
       auth,
-      process.env.BACKEND_EMAIL,      // add these two env‑vars in Vercel
-      process.env.BACKEND_PASSWORD,
+      process.env.BACKEND_EMAIL,      // set in Vercel
+      process.env.BACKEND_PASSWORD,   // set in Vercel
     ).catch(err => {
       console.error('Firebase sign‑in failed', err);
       throw new Error('backend auth failed');
@@ -25,7 +24,7 @@ async function ensureBackendSignIn() {
   return signInOnce;
 }
 
-/* ---------- POST /api/generate‑barcode ---------- */
+/* ───────── POST /api/generate‑barcode ───────── */
 export async function POST(req) {
   try {
     const { store, po, pallet, quantity } = await req.json();
@@ -33,8 +32,7 @@ export async function POST(req) {
       return NextResponse.json({ error: 'Missing fields' }, { status: 400 });
     }
 
-    // Firestore rule requires auth for CREATE on /pallets/*
-    await ensureBackendSignIn();
+    await ensureBackendSignIn();                // satisfy Firestore rules
 
     const key = nanoid(8);
 
