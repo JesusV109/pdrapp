@@ -57,6 +57,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             >
               All Orders
             </Link>
+            <Link
+             href="/place"
+             className="transition transform duration-300 hover:scale-105"
+             >
+            Place Pallet
+            </Link>
             <Link 
               href="/newOrder" 
               className="transition transform duration-300 hover:scale-105"

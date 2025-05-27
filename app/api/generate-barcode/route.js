@@ -19,6 +19,7 @@ export async function POST(req) {
     po,
     pallet,
     quantity,
+    location: '',
     created: Date.now(),
   });
 

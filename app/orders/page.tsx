@@ -1,190 +1,229 @@
-"use client";
+'use client';
 
-import { useEffect, useState } from "react";
-import { auth, db } from "../firebaseConfig";
-import { onAuthStateChanged, User } from "firebase/auth";
-import { collection, getDocs, deleteDoc, doc, addDoc } from "firebase/firestore";
-import Link from "next/link";
+import { useEffect, useState, useCallback } from 'react';
+import Link from 'next/link';
+import { auth, db } from '@/app/firebaseConfig';
+import {
+  onAuthStateChanged,
+  type User,
+} from 'firebase/auth';
+import {
+  collection,
+  onSnapshot,
+  addDoc,
+  deleteDoc,
+  doc,
+  query,
+  orderBy,
+  startAfter,
+  limit,
+  getDocs,
+  type DocumentSnapshot,
+} from 'firebase/firestore';
 
-interface OrderData {
+/* ---------- types ---------- */
+type Source = 'order' | 'pallet';
+
+interface OrderDoc {
   id: string;
+  source: Source;
   location: string;
   companyName: string;
   numberOrder: string;
   po: string;
   destination: string;
   palletNumber: string;
+  store?: string;
+  pallet?: string;
+  quantity?: string;
 }
+interface PalletDoc {
+  id: string;
+  source: Source;
+  store: string;
+  po: string;
+  pallet: string;
+  quantity: string;
+  created: number;
+  location?: string;
+  companyName?: string;
+  numberOrder?: string;
+  destination?: string;
+  palletNumber?: string;
+}
+type Row = OrderDoc | PalletDoc;
 
-export default function OrdersListPage() {
+/* ---------- constants ---------- */
+const PAGE_SIZE = 100;
+
+/* ---------- component ---------- */
+export default function OrdersAndPallets() {
   const [user, setUser] = useState<User | null>(null);
-  const [orders, setOrders] = useState<OrderData[]>([]);
-  const [searchTerm, setSearchTerm] = useState("");
+  const [rows, setRows] = useState<Row[]>([]);
+  const [search, setSearch] = useState('');
+  const [lastDoc, setLastDoc] = useState<DocumentSnapshot | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
 
-  // Listen for auth changes
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
-      setUser(firebaseUser);
-    });
-    return unsubscribe;
-  }, []);
+  /* auth */
+  useEffect(() => onAuthStateChanged(auth, setUser), []);
 
-  // Fetch orders if user is signed in
+  /* live ORDERS listener */
   useEffect(() => {
     if (!user) return;
-
-    const fetchOrders = async () => {
-      try {
-        const colRef = collection(db, "orders");
-        const snapshot = await getDocs(colRef);
-
-        const fetchedData = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        })) as OrderData[];
-
-        setOrders(fetchedData);
-      } catch (error) {
-        console.error("Error fetching orders:", error);
-      }
-    };
-
-    fetchOrders();
+    const unsub = onSnapshot(collection(db, 'orders'), snap => {
+      const orders = snap.docs.map(
+        d => ({
+          id: d.id,
+          source: 'order',
+          ...(d.data() as Omit<OrderDoc, 'id' | 'source'>),
+        }),
+      ) as OrderDoc[];
+      setRows(prev => [
+        ...prev.filter(r => r.source !== 'order'),
+        ...orders,
+      ]);
+    });
+    return unsub;
   }, [user]);
 
-  // Delete pallet handler
-  const handleDeletePallet = async (order: OrderData) => {
+  /* load next page of pallets (memoised) */
+  const loadNextPage = useCallback(async () => {
+    if (!user || loadingMore) return;
+    setLoadingMore(true);
+
+    const q = query(
+      collection(db, 'pallets'),
+      orderBy('created', 'desc'),
+      limit(PAGE_SIZE),
+      ...(lastDoc ? [startAfter(lastDoc)] : []),
+    );
+
+    const snap = await getDocs(q);
+    const pallets = snap.docs.map(
+      d => ({
+        id: d.id,
+        source: 'pallet',
+        ...(d.data() as Omit<PalletDoc, 'id' | 'source'>),
+      }),
+    ) as PalletDoc[];
+
+    setRows(prev => [
+      ...prev.filter(r => r.source !== 'pallet'),
+      ...pallets,
+    ]);
+    setLastDoc(snap.docs[snap.docs.length - 1] ?? null);
+    setLoadingMore(false);
+  }, [user, loadingMore, lastDoc]);
+
+  /* fetch first page once user is set */
+  useEffect(() => { if (user) loadNextPage(); }, [user, loadNextPage]);
+
+  /* delete & archive */
+  async function handleDelete(row: Row) {
+    if (!confirm('Delete this entry?')) return;
     try {
-      // Save a record of the order in the "deletedOrders" collection with a timestamp
-      await addDoc(collection(db, "deletedOrders"), {
-        ...order,
+      await addDoc(collection(db, 'deletedOrders'), {
+        ...row,
         deletedAt: new Date().toISOString(),
       });
-
-      // Delete the order from the "orders" collection
-      await deleteDoc(doc(db, "orders", order.id));
-
-      // Remove the order from local state
-      setOrders((prevOrders) => prevOrders.filter((o) => o.id !== order.id));
-    } catch (error) {
-      console.error("Error deleting pallet:", error);
+      await deleteDoc(doc(db, row.source === 'order' ? 'orders' : 'pallets', row.id));
+    } catch (err) {
+      console.error('Delete failed:', err);
     }
-  };
+  }
 
-  // If not signed in, show a message and link to sign in
+  /* auth gate */
   if (!user) {
     return (
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          justifyContent: "center",
-          alignItems: "center",
-          minHeight: "100vh",
-          backgroundColor: "white",
-          color: "black",
-          padding: "2rem",
-          textAlign: "center",
-        }}
-      >
-        <h1>Please sign in to view orders.</h1>
-        <Link href="/signIn">Go to Sign In</Link>
+      <div className="flex flex-col items-center justify-center min-h-screen p-8 text-center">
+        <h1 className="mb-4 text-xl">Please sign in to view data.</h1>
+        <Link href="/signIn" className="text-blue-600 underline">
+          Go to Sign In
+        </Link>
       </div>
     );
   }
 
-  // Filter orders based on searchTerm
-  const filteredOrders = orders.filter((order) => {
-    const term = searchTerm.toLowerCase();
-    return (
-      order.location?.toLowerCase().includes(term) ||
-      order.companyName?.toLowerCase().includes(term) ||
-      order.numberOrder?.toLowerCase().includes(term) ||
-      order.po?.toLowerCase().includes(term) ||
-      order.destination?.toLowerCase().includes(term)
-    );
-  });
+  /* search */
+  const term = search.toLowerCase();
+  const filtered = rows.filter(r =>
+    JSON.stringify(r).toLowerCase().includes(term),
+  );
 
-  // Render the full-screen container for orders
+  /* UI */
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        minHeight: "100vh",
-        width: "100vw",
-        backgroundColor: "white",
-        color: "black",
-        padding: "2rem",
-        boxSizing: "border-box",
-      }}
-    >
-      <h1>All Orders</h1>
+    <div className="flex flex-col items-center w-screen min-h-screen p-8">
+      <h1 className="mb-4 text-2xl font-semibold">Orders &amp; Pallets</h1>
 
       <input
-        type="text"
-        placeholder="Search by location, company name, order number, PO, or destination"
-        value={searchTerm}
-        onChange={(e) => setSearchTerm(e.target.value)}
-        style={{
-          marginBottom: "1rem",
-          border: "1px solid #ccc",
-          padding: "0.5rem",
-          borderRadius: "4px",
-          width: "100%",
-          maxWidth: "600px",
-        }}
+        className="w-full max-w-xl p-2 mb-6 border rounded"
+        placeholder="Search anything…"
+        value={search}
+        onChange={e => setSearch(e.target.value)}
       />
 
-      {filteredOrders.length === 0 ? (
-        <p>No orders found.</p>
+      {filtered.length === 0 ? (
+        <p>No results.</p>
       ) : (
-        <ul
-          style={{
-            listStyle: "none",
-            padding: 0,
-            width: "100%",
-            maxWidth: "600px",
-          }}
-        >
-          {filteredOrders.map((order) => (
-            <li
-              key={order.id}
-              style={{
-                border: "1px solid #ccc",
-                borderRadius: "4px",
-                padding: "1rem",
-                marginBottom: "1rem",
-              }}
-            >
-              <p>
-                <strong>Location:</strong> {order.location}
-              </p>
-              <p>
-                <strong>Company:</strong> {order.companyName}
-              </p>
-              <p>
-                <strong>Order #:</strong> {order.numberOrder}
-              </p>
-              <p>
-                <strong>PO:</strong> {order.po}
-              </p>
-              <p>
-                <strong>Destination:</strong> {order.destination}
-              </p>
-              <p>
-                <strong>Pallet:</strong> {order.palletNumber}
-              </p>
-              <button
-                onClick={() => handleDeletePallet(order)}
-                className="mt-2 bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded transition transform duration-300 hover:scale-105"
-              >
-                Delete Pallet
-              </button>
+        <ul className="w-full max-w-xl space-y-4">
+          {filtered.map(r => (
+            <li key={r.id} className="p-4 border rounded shadow-sm space-y-1">
+              <span className={
+                r.source === 'order'
+                  ? 'inline-block px-2 py-0.5 text-xs rounded bg-purple-200 text-purple-800'
+                  : 'inline-block px-2 py-0.5 text-xs rounded bg-green-200 text-green-800'
+              }>
+                {r.source}
+              </span>
+
+              {'location' in r && (
+                <p><strong>Location:</strong> {r.location || <em className="text-gray-400">—</em>}</p>
+              )}
+
+              {r.source === 'order' ? (
+                <>
+                  <p><strong>Company:</strong> {r.companyName}</p>
+                  <p><strong>Order #:</strong> {r.numberOrder}</p>
+                  <p><strong>PO:</strong> {r.po}</p>
+                  <p><strong>Destination:</strong> {r.destination}</p>
+                  <p><strong>Pallet #:</strong> {r.palletNumber}</p>
+                </>
+              ) : (
+                <>
+                  <p><strong>Store:</strong> {r.store}</p>
+                  <p><strong>PO:</strong> {r.po}</p>
+                  <p><strong>Pallet:</strong> {r.pallet}</p>
+                  <p><strong>Qty:</strong> {r.quantity}</p>
+                </>
+              )}
+
+              <div className="flex gap-3 mt-3">
+                <Link
+                  href={`/edit/${r.source}/${r.id}`}
+                  className="px-3 py-1 text-white bg-blue-600 rounded hover:bg-blue-700 text-sm"
+                >
+                  edit
+                </Link>
+                <button
+                  onClick={() => handleDelete(r)}
+                  className="px-3 py-1 text-white bg-red-500 rounded hover:bg-red-600 text-sm"
+                >
+                  delete
+                </button>
+              </div>
             </li>
           ))}
         </ul>
+      )}
+
+      {lastDoc && (
+        <button
+          disabled={loadingMore}
+          onClick={loadNextPage}
+          className="mt-6 px-4 py-2 border rounded"
+        >
+          {loadingMore ? 'Loading…' : 'Load more pallets'}
+        </button>
       )}
     </div>
   );
