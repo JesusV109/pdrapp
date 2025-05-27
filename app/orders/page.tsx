@@ -4,11 +4,23 @@ import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { auth, db } from '@/app/firebaseConfig';
 import {
-  onAuthStateChanged, type User,
+  onAuthStateChanged,
+  type User,
 } from 'firebase/auth';
 import {
-  collection, onSnapshot, query, orderBy, limit,
-  startAfter, getDocs, addDoc, deleteDoc, doc,
+  collection,
+  onSnapshot,
+  query,
+  orderBy,
+  limit,
+  startAfter,
+  getDocs,
+  addDoc,
+  deleteDoc,
+  doc,
+  type DocumentData,
+  type QuerySnapshot,
+  type QueryDocumentSnapshot,
   type DocumentSnapshot,
 } from 'firebase/firestore';
 
@@ -19,81 +31,103 @@ interface OrderDoc {
   id: string;  source: Source;
   location: string; companyName: string; numberOrder: string;
   po: string; destination: string; palletNumber: string;
+  /* pallet keys (for union) */
   store?: string; pallet?: string; quantity?: string;
 }
+
 interface PalletDoc {
   id: string;  source: Source;
   store: string; po: string; pallet: string; quantity: string; created: number;
   location?: string; companyName?: string; numberOrder?: string;
   destination?: string; palletNumber?: string;
 }
+
 type Row = OrderDoc | PalletDoc;
 
 /* ---------- constants ---------- */
 const PAGE_SIZE = 100;
 
-/* ---------- component ---------- */
+/* ---------- page component ---------- */
 export default function OrdersAndPallets() {
-  const [user, setUser]         = useState<User | null>(null);
-  const [rows, setRows]         = useState<Row[]>([]);
-  const [search, setSearch]     = useState('');
-  const [lastDoc, setLastDoc]   = useState<DocumentSnapshot | null>(null);
-  const [loading, setLoading]   = useState(false);
+  /* state */
+  const [user, setUser]     = useState<User | null>(null);
+  const [rows, setRows]     = useState<Row[]>([]);
+  const [search, setSearch] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  /* auth */
+  /* --- auth listener --- */
   useEffect(() => onAuthStateChanged(auth, setUser), []);
 
-  /* live ORDERS */
+  /* --- live ORDERS listener --- */
   useEffect(() => {
     if (!user) return;
     const unsub = onSnapshot(collection(db, 'orders'), snap => {
       const orders = snap.docs.map(
-        d => ({ id: d.id, source: 'order', ...(d.data() as Omit<OrderDoc,'id'|'source'>) }),
+        d => ({
+          id: d.id,
+          source: 'order',
+          ...(d.data() as Omit<OrderDoc, 'id' | 'source'>),
+        }),
       ) as OrderDoc[];
-      setRows(prev => [...prev.filter(r => r.source !== 'order'), ...orders]);
+      setRows(prev => [
+        ...prev.filter(r => r.source !== 'order'),
+        ...orders,
+      ]);
     });
     return unsub;
   }, [user]);
 
-  /* load all pallets in pages */
+  /* --- load ALL pallets in pages --- */
   const loadPallets = useCallback(async () => {
     if (!user) return;
     setLoading(true);
-    let cursor: DocumentSnapshot | null = null;
+
+    let cursor: DocumentSnapshot<DocumentData> | null = null;
 
     while (true) {
-      const snap = await getDocs(
+      const snap: QuerySnapshot<DocumentData> = await getDocs(
         query(
           collection(db, 'pallets'),
           orderBy('created', 'desc'),
           ...(cursor ? [startAfter(cursor)] : []),
           limit(PAGE_SIZE),
         ),
-      ) as import('firebase/firestore').QuerySnapshot;
+      );
 
       const batch = snap.docs.map(
-        d => ({ id: d.id, source: 'pallet', ...(d.data() as Omit<PalletDoc,'id'|'source'>) }),
+        (d: QueryDocumentSnapshot<DocumentData>) => ({
+          id: d.id,
+          source: 'pallet',
+          ...(d.data() as Omit<PalletDoc, 'id' | 'source'>),
+        }),
       ) as PalletDoc[];
 
-      setRows(prev => [...prev.filter(r => r.source !== 'pallet'), ...batch]);
-      cursor = snap.docs[snap.docs.length - 1] ?? null;
-      setLastDoc(cursor);
+      setRows(prev => [
+        ...prev.filter(r => r.source !== 'pallet'),
+        ...batch,
+      ]);
 
-      if (batch.length < PAGE_SIZE) break;            // fetched last page
+      cursor = snap.docs[snap.docs.length - 1] ?? null;
+      if (batch.length < PAGE_SIZE) break;   // reached last page
     }
+
     setLoading(false);
   }, [user]);
 
+  /* first load */
   useEffect(() => { if (user) loadPallets(); }, [user, loadPallets]);
 
-  /* archive delete */
+  /* --- delete & archive --- */
   async function handleDelete(row: Row) {
     if (!confirm('Delete this entry?')) return;
-    await addDoc(collection(db, 'deletedOrders'), { ...row, deletedAt: new Date().toISOString() });
+    await addDoc(collection(db, 'deletedOrders'), {
+      ...row,
+      deletedAt: new Date().toISOString(),
+    });
     await deleteDoc(doc(db, row.source === 'order' ? 'orders' : 'pallets', row.id));
   }
 
-  /* auth gate */
+  /* --- auth gate --- */
   if (!user) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen p-8 text-center">
@@ -103,8 +137,11 @@ export default function OrdersAndPallets() {
     );
   }
 
-  const term     = search.toLowerCase();
-  const filtered = rows.filter(r => JSON.stringify(r).toLowerCase().includes(term));
+  /* ---- filter ---- */
+  const term      = search.toLowerCase();
+  const filtered  = rows.filter(r =>
+    JSON.stringify(r).toLowerCase().includes(term),
+  );
 
   /* ---------- UI ---------- */
   return (
@@ -124,6 +161,7 @@ export default function OrdersAndPallets() {
         <ul className="w-full max-w-xl space-y-4">
           {filtered.map(r => (
             <li key={r.id} className="p-4 border rounded shadow-sm space-y-1">
+              {/* tag */}
               <span className={
                 r.source === 'order'
                   ? 'inline-block px-2 py-0.5 text-xs rounded bg-purple-200 text-purple-800'
@@ -169,7 +207,8 @@ export default function OrdersAndPallets() {
               </div>
             </li>
           ))}
-          {/* small bottom padding so last card isn’t glued to viewport */}
+
+          {/* bottom padding so last card isn’t glued to viewport */}
           <li aria-hidden className="py-4" />
         </ul>
       )}
