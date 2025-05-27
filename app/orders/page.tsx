@@ -4,20 +4,11 @@ import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { auth, db } from '@/app/firebaseConfig';
 import {
-  onAuthStateChanged,
-  type User,
+  onAuthStateChanged, type User,
 } from 'firebase/auth';
 import {
-  collection,
-  onSnapshot,
-  query,
-  orderBy,
-  limit,
-  startAfter,
-  getDocs,
-  addDoc,
-  deleteDoc,
-  doc,
+  collection, onSnapshot, query, orderBy, limit,
+  startAfter, getDocs, addDoc, deleteDoc, doc,
   type DocumentSnapshot,
 } from 'firebase/firestore';
 
@@ -28,7 +19,6 @@ interface OrderDoc {
   id: string;  source: Source;
   location: string; companyName: string; numberOrder: string;
   po: string; destination: string; palletNumber: string;
-  /* pallet keys (for union) */
   store?: string; pallet?: string; quantity?: string;
 }
 interface PalletDoc {
@@ -44,81 +34,66 @@ const PAGE_SIZE = 100;
 
 /* ---------- component ---------- */
 export default function OrdersAndPallets() {
-  const [user, setUser]     = useState<User | null>(null);
-  const [rows, setRows]     = useState<Row[]>([]);
-  const [search, setSearch] = useState('');
-  const [lastDoc, setLastDoc] = useState<DocumentSnapshot | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [user, setUser]         = useState<User | null>(null);
+  const [rows, setRows]         = useState<Row[]>([]);
+  const [search, setSearch]     = useState('');
+  const [lastDoc, setLastDoc]   = useState<DocumentSnapshot | null>(null);
+  const [loading, setLoading]   = useState(false);
 
-  /* --- auth listener --- */
+  /* auth */
   useEffect(() => onAuthStateChanged(auth, setUser), []);
 
-  /* --- live ORDERS listener --- */
+  /* live ORDERS */
   useEffect(() => {
     if (!user) return;
     const unsub = onSnapshot(collection(db, 'orders'), snap => {
       const orders = snap.docs.map(
         d => ({ id: d.id, source: 'order', ...(d.data() as Omit<OrderDoc,'id'|'source'>) }),
       ) as OrderDoc[];
-      setRows(prev => [
-        ...prev.filter(r => r.source !== 'order'),
-        ...orders,
-      ]);
+      setRows(prev => [...prev.filter(r => r.source !== 'order'), ...orders]);
     });
     return unsub;
   }, [user]);
 
-  /* --- load pallets pages recursively until < PAGE_SIZE --- */
+  /* load all pallets in pages */
   const loadPallets = useCallback(async () => {
     if (!user) return;
     setLoading(true);
+    let cursor: DocumentSnapshot | null = null;
 
-    let nextCursor = lastDoc;
     while (true) {
       const snap = await getDocs(
         query(
           collection(db, 'pallets'),
           orderBy('created', 'desc'),
-          ...(nextCursor ? [startAfter(nextCursor)] : []),
+          ...(cursor ? [startAfter(cursor)] : []),
           limit(PAGE_SIZE),
         ),
-      );
+      ) as import('firebase/firestore').QuerySnapshot;
 
-      /* map current batch */
       const batch = snap.docs.map(
         d => ({ id: d.id, source: 'pallet', ...(d.data() as Omit<PalletDoc,'id'|'source'>) }),
       ) as PalletDoc[];
 
-      /* merge */
-      setRows(prev => [
-        ...prev.filter(r => r.source !== 'pallet'),
-        ...(nextCursor ? batch : [...batch]),   // first merge replaces earlier pallets
-      ]);
+      setRows(prev => [...prev.filter(r => r.source !== 'pallet'), ...batch]);
+      cursor = snap.docs[snap.docs.length - 1] ?? null;
+      setLastDoc(cursor);
 
-      /* update cursor */
-      nextCursor = snap.docs[snap.docs.length - 1] ?? null;
-      setLastDoc(nextCursor);
-
-      /* stop if less than a full page */
-      if (batch.length < PAGE_SIZE) break;
+      if (batch.length < PAGE_SIZE) break;            // fetched last page
     }
     setLoading(false);
-  }, [user, lastDoc]);
+  }, [user]);
 
-  /* first load */
   useEffect(() => { if (user) loadPallets(); }, [user, loadPallets]);
 
-  /* --- delete & archive --- */
+  /* archive delete */
   async function handleDelete(row: Row) {
     if (!confirm('Delete this entry?')) return;
-    await addDoc(collection(db, 'deletedOrders'), {
-      ...row,
-      deletedAt: new Date().toISOString(),
-    });
+    await addDoc(collection(db, 'deletedOrders'), { ...row, deletedAt: new Date().toISOString() });
     await deleteDoc(doc(db, row.source === 'order' ? 'orders' : 'pallets', row.id));
   }
 
-  /* --- auth gate --- */
+  /* auth gate */
   if (!user) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen p-8 text-center">
@@ -128,9 +103,8 @@ export default function OrdersAndPallets() {
     );
   }
 
-  /* --- search filter --- */
-  const term      = search.toLowerCase();
-  const filtered  = rows.filter(r => JSON.stringify(r).toLowerCase().includes(term));
+  const term     = search.toLowerCase();
+  const filtered = rows.filter(r => JSON.stringify(r).toLowerCase().includes(term));
 
   /* ---------- UI ---------- */
   return (
@@ -147,58 +121,57 @@ export default function OrdersAndPallets() {
       {loading && rows.length === 0 && <p>Loading…</p>}
 
       {filtered.length > 0 && (
-        /* inner scroll container */
-        <div className="w-full max-w-xl max-h-[70vh] overflow-y-auto border rounded p-4 space-y-4">
-          <ul className="space-y-4">
-            {filtered.map(r => (
-              <li key={r.id} className="p-4 border rounded shadow-sm space-y-1">
-                <span className={
-                  r.source === 'order'
-                    ? 'inline-block px-2 py-0.5 text-xs rounded bg-purple-200 text-purple-800'
-                    : 'inline-block px-2 py-0.5 text-xs rounded bg-green-200 text-green-800'
-                }>
-                  {r.source}
-                </span>
+        <ul className="w-full max-w-xl space-y-4">
+          {filtered.map(r => (
+            <li key={r.id} className="p-4 border rounded shadow-sm space-y-1">
+              <span className={
+                r.source === 'order'
+                  ? 'inline-block px-2 py-0.5 text-xs rounded bg-purple-200 text-purple-800'
+                  : 'inline-block px-2 py-0.5 text-xs rounded bg-green-200 text-green-800'
+              }>
+                {r.source}
+              </span>
 
-                {'location' in r && (
-                  <p><strong>Location:</strong> {r.location || <em className="text-gray-400">—</em>}</p>
-                )}
+              {'location' in r && (
+                <p><strong>Location:</strong> {r.location || <em className="text-gray-400">—</em>}</p>
+              )}
 
-                {r.source === 'order' ? (
-                  <>
-                    <p><strong>Company:</strong> {r.companyName}</p>
-                    <p><strong>Order #:</strong> {r.numberOrder}</p>
-                    <p><strong>PO:</strong> {r.po}</p>
-                    <p><strong>Destination:</strong> {r.destination}</p>
-                    <p><strong>Pallet #:</strong> {r.palletNumber}</p>
-                  </>
-                ) : (
-                  <>
-                    <p><strong>Store:</strong> {r.store}</p>
-                    <p><strong>PO:</strong> {r.po}</p>
-                    <p><strong>Pallet:</strong> {r.pallet}</p>
-                    <p><strong>Qty:</strong> {r.quantity}</p>
-                  </>
-                )}
+              {r.source === 'order' ? (
+                <>
+                  <p><strong>Company:</strong> {r.companyName}</p>
+                  <p><strong>Order #:</strong> {r.numberOrder}</p>
+                  <p><strong>PO:</strong> {r.po}</p>
+                  <p><strong>Destination:</strong> {r.destination}</p>
+                  <p><strong>Pallet #:</strong> {r.palletNumber}</p>
+                </>
+              ) : (
+                <>
+                  <p><strong>Store:</strong> {r.store}</p>
+                  <p><strong>PO:</strong> {r.po}</p>
+                  <p><strong>Pallet:</strong> {r.pallet}</p>
+                  <p><strong>Qty:</strong> {r.quantity}</p>
+                </>
+              )}
 
-                <div className="flex gap-3 mt-3">
-                  <Link
-                    href={`/edit/${r.source}/${r.id}`}
-                    className="px-3 py-1 text-white bg-blue-600 rounded hover:bg-blue-700 text-sm"
-                  >
-                    edit
-                  </Link>
-                  <button
-                    onClick={() => handleDelete(r)}
-                    className="px-3 py-1 text-white bg-red-500 rounded hover:bg-red-600 text-sm"
-                  >
-                    delete
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </div>
+              <div className="flex gap-3 mt-3">
+                <Link
+                  href={`/edit/${r.source}/${r.id}`}
+                  className="px-3 py-1 text-white bg-blue-600 rounded hover:bg-blue-700 text-sm"
+                >
+                  edit
+                </Link>
+                <button
+                  onClick={() => handleDelete(r)}
+                  className="px-3 py-1 text-white bg-red-500 rounded hover:bg-red-600 text-sm"
+                >
+                  delete
+                </button>
+              </div>
+            </li>
+          ))}
+          {/* small bottom padding so last card isn’t glued to viewport */}
+          <li aria-hidden className="py-4" />
+        </ul>
       )}
     </div>
   );
