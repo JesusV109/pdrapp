@@ -28,6 +28,7 @@ interface OrderDoc {
   id: string;  source: Source;
   location: string; companyName: string; numberOrder: string;
   po: string; destination: string; palletNumber: string;
+  /* pallet keys (for union) */
   store?: string; pallet?: string; quantity?: string;
 }
 interface PalletDoc {
@@ -43,11 +44,11 @@ const PAGE_SIZE = 100;
 
 /* ---------- component ---------- */
 export default function OrdersAndPallets() {
-  const [user, setUser]   = useState<User | null>(null);
-  const [rows, setRows]   = useState<Row[]>([]);
+  const [user, setUser]     = useState<User | null>(null);
+  const [rows, setRows]     = useState<Row[]>([]);
   const [search, setSearch] = useState('');
   const [lastDoc, setLastDoc] = useState<DocumentSnapshot | null>(null);
-  const [loadingMore, setLoadingMore] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   /* --- auth listener --- */
   useEffect(() => onAuthStateChanged(auth, setUser), []);
@@ -67,50 +68,45 @@ export default function OrdersAndPallets() {
     return unsub;
   }, [user]);
 
-/* --- load a page of pallets --- */
-const loadNextPage = useCallback(async () => {
-  if (!user || loadingMore) return;
-  setLoadingMore(true);
+  /* --- load pallets pages recursively until < PAGE_SIZE --- */
+  const loadPallets = useCallback(async () => {
+    if (!user) return;
+    setLoading(true);
 
-  let snap;
-  try {
-    // 1st attempt: order by `created`
-    const q = query(
-      collection(db, 'pallets'),
-      orderBy('created', 'desc'),
-      limit(PAGE_SIZE),
-      ...(lastDoc ? [startAfter(lastDoc)] : []),
-    );
-    snap = await getDocs(q);
+    let nextCursor = lastDoc;
+    while (true) {
+      const snap = await getDocs(
+        query(
+          collection(db, 'pallets'),
+          orderBy('created', 'desc'),
+          ...(nextCursor ? [startAfter(nextCursor)] : []),
+          limit(PAGE_SIZE),
+        ),
+      );
 
-    // Fallback: if Firestore rejects on missing index or field
-  } catch (err) {
-    console.warn('created order query failed, falling back to __name__', err);
+      /* map current batch */
+      const batch = snap.docs.map(
+        d => ({ id: d.id, source: 'pallet', ...(d.data() as Omit<PalletDoc,'id'|'source'>) }),
+      ) as PalletDoc[];
 
-    const q = query(
-      collection(db, 'pallets'),
-      orderBy('__name__', 'desc'),
-      limit(PAGE_SIZE),
-      ...(lastDoc ? [startAfter(lastDoc)] : []),
-    );
-    snap = await getDocs(q);          // ← reuse same var name
-  }
+      /* merge */
+      setRows(prev => [
+        ...prev.filter(r => r.source !== 'pallet'),
+        ...(nextCursor ? batch : [...batch]),   // first merge replaces earlier pallets
+      ]);
 
-  /* after either query succeeds → update state */
-  const pallets = snap.docs.map(
-    d => ({ id: d.id, source: 'pallet', ...(d.data() as Omit<PalletDoc,'id'|'source'>) }),
-  ) as PalletDoc[];
+      /* update cursor */
+      nextCursor = snap.docs[snap.docs.length - 1] ?? null;
+      setLastDoc(nextCursor);
 
-  setRows(prev => [
-    ...prev.filter(r => r.source !== 'pallet'),
-    ...pallets,
-  ]);
-  setLastDoc(snap.docs[snap.docs.length - 1] ?? null);
-  setLoadingMore(false);
-}, [user, loadingMore, lastDoc]);
- 
-  /* first page once user is ready */
-  useEffect(() => { if (user) loadNextPage(); }, [user, loadNextPage]);
+      /* stop if less than a full page */
+      if (batch.length < PAGE_SIZE) break;
+    }
+    setLoading(false);
+  }, [user, lastDoc]);
+
+  /* first load */
+  useEffect(() => { if (user) loadPallets(); }, [user, loadPallets]);
 
   /* --- delete & archive --- */
   async function handleDelete(row: Row) {
@@ -148,10 +144,10 @@ const loadNextPage = useCallback(async () => {
         onChange={e => setSearch(e.target.value)}
       />
 
-      {filtered.length === 0 ? (
-        <p>No results.</p>
-      ) : (
-        /* scroll container prevents outer‑page jumping */
+      {loading && rows.length === 0 && <p>Loading…</p>}
+
+      {filtered.length > 0 && (
+        /* inner scroll container */
         <div className="w-full max-w-xl max-h-[70vh] overflow-y-auto border rounded p-4 space-y-4">
           <ul className="space-y-4">
             {filtered.map(r => (
@@ -202,16 +198,6 @@ const loadNextPage = useCallback(async () => {
               </li>
             ))}
           </ul>
-
-          {lastDoc && (
-            <button
-              disabled={loadingMore}
-              onClick={loadNextPage}
-              className="mt-4 w-full border rounded py-2"
-            >
-              {loadingMore ? 'Loading…' : 'Load more pallets'}
-            </button>
-          )}
         </div>
       )}
     </div>
