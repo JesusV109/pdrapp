@@ -67,31 +67,48 @@ export default function OrdersAndPallets() {
     return unsub;
   }, [user]);
 
-  /* --- load a page of pallets --- */
-  const loadNextPage = useCallback(async () => {
-    if (!user || loadingMore) return;
-    setLoadingMore(true);
+/* --- load a page of pallets --- */
+const loadNextPage = useCallback(async () => {
+  if (!user || loadingMore) return;
+  setLoadingMore(true);
 
+  let snap;
+  try {
+    // 1st attempt: order by `created`
     const q = query(
       collection(db, 'pallets'),
       orderBy('created', 'desc'),
       limit(PAGE_SIZE),
       ...(lastDoc ? [startAfter(lastDoc)] : []),
     );
+    snap = await getDocs(q);
 
-    const snap     = await getDocs(q);
-    const pallets  = snap.docs.map(
-      d => ({ id: d.id, source: 'pallet', ...(d.data() as Omit<PalletDoc,'id'|'source'>) }),
-    ) as PalletDoc[];
+    // Fallback: if Firestore rejects on missing index or field
+  } catch (err) {
+    console.warn('created order query failed, falling back to __name__', err);
 
-    setRows(prev => [
-      ...prev.filter(r => r.source !== 'pallet'),
-      ...pallets,
-    ]);
-    setLastDoc(snap.docs[snap.docs.length - 1] ?? null);
-    setLoadingMore(false);
-  }, [user, loadingMore, lastDoc]);
+    const q = query(
+      collection(db, 'pallets'),
+      orderBy('__name__', 'desc'),
+      limit(PAGE_SIZE),
+      ...(lastDoc ? [startAfter(lastDoc)] : []),
+    );
+    snap = await getDocs(q);          // ← reuse same var name
+  }
 
+  /* after either query succeeds → update state */
+  const pallets = snap.docs.map(
+    d => ({ id: d.id, source: 'pallet', ...(d.data() as Omit<PalletDoc,'id'|'source'>) }),
+  ) as PalletDoc[];
+
+  setRows(prev => [
+    ...prev.filter(r => r.source !== 'pallet'),
+    ...pallets,
+  ]);
+  setLastDoc(snap.docs[snap.docs.length - 1] ?? null);
+  setLoadingMore(false);
+}, [user, loadingMore, lastDoc]);
+ 
   /* first page once user is ready */
   useEffect(() => { if (user) loadNextPage(); }, [user, loadNextPage]);
 
